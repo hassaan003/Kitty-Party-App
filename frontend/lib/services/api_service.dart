@@ -286,9 +286,6 @@ Future<dynamic> findUser(String phone) async {
 
 
 
-
-
-
 Future<List<dynamic>> getMembers(String committeeId) async {
   await init();
 
