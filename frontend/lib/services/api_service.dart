@@ -51,17 +51,66 @@ class ApiService {
     return response.data.toString();
   }
 
-Future acceptRequest(String id, Map data) async {
-  await http.post(
-    Uri.parse("$baseUrl/accept-request/$id"),
-    headers: {"Content-Type": "application/json"},
-    body: jsonEncode(data),
+
+
+Future getNotifications(String userId) async {
+  final res = await http.get(
+    Uri.parse("$baseUrl/get-notifications/$userId"),
   );
+
+  return jsonDecode(res.body);
 }
 
-Future getNotifications() async {
-  final res = await http.get(Uri.parse("$baseUrl/get-notifications"));
-  return jsonDecode(res.body);
+Future<String> approveJoinRequest(
+  String notificationId,
+) async {
+
+  final res = await http.post(
+    Uri.parse(
+      "$baseUrl/approve-join-request/$notificationId",
+    ),
+  );
+
+  return res.body;
+}
+
+Future<String> rejectJoinRequest(
+  String notificationId,
+) async {
+
+  final res = await http.post(
+    Uri.parse(
+      "$baseUrl/reject-join-request/$notificationId",
+    ),
+  );
+
+  return res.body;
+}
+
+Future<String> acceptInvite(
+  String notificationId,
+) async {
+
+  final res = await http.post(
+    Uri.parse(
+      "$baseUrl/accept-invite/$notificationId",
+    ),
+  );
+
+  return res.body;
+}
+
+Future<String> clearNotification(
+  String id,
+) async {
+
+  final res = await http.delete(
+    Uri.parse(
+      "$baseUrl/clear-notification/$id",
+    ),
+  );
+
+  return res.body;
 }
 
 Future<List> getCycles(String committeeId) async {
@@ -195,19 +244,28 @@ Future<List<dynamic>> getCommitteesByPhone(String phone) async {
 
 
 Future<String> sendJoinRequest({
+
   required String committeeId,
   required String adminId,
   required String userId,
   required int selectedNumber,
+
 }) async {
+
   await init();
 
   final response = await dio.post(
+
     "/join-request",
+
     data: {
+
       "committee_id": committeeId,
+
       "admin_id": adminId,
+
       "user_id": userId,
+
       "number_of_committee": selectedNumber,
     },
   );
@@ -226,31 +284,10 @@ Future<dynamic> findUser(String phone) async {
   return null;
 }
 
-Future<List<dynamic>> getJoinRequests(String adminId) async {
-  await init();
-  
 
-  final response = await dio.get("/join-requests/$adminId");
 
-  return response.data;
-}
 
-Future<String> approveRequest(String requestId) async {
-  await init();
 
-  final response = await dio.post("/approve-join-request/$requestId");
-  print(response);
-
-  return response.data.toString();
-}
-
-Future<String> rejectRequest(String requestId) async {
-  await init();
-
-  final response = await dio.delete("/reject-join-request/$requestId");
-
-  return response.data.toString();
-}
 
 Future<List<dynamic>> getMembers(String committeeId) async {
   await init();

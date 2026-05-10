@@ -272,9 +272,25 @@ app.get('/invite-member/:phoneno', async (req, res) => {
 })
 
 app.post("/join-request", async (req, res) => {
-    console.log("join request body", req.body);
+
     try {
-        const { committee_id, admin_id, user_id, number_of_committee } = req.body;
+
+        const {
+            committee_id,
+            admin_id,
+            user_id,
+            number_of_committee
+        } = req.body;
+
+        const existing = await JoinRequest.findOne({
+            committee_id,
+            user_id,
+            status: "pending"
+        });
+
+        if (existing) {
+            return res.send("Already requested");
+        }
 
         const request = new JoinRequest({
             committee_id,
@@ -285,8 +301,50 @@ app.post("/join-request", async (req, res) => {
 
         await request.save();
 
+        // =========================
+        // GET USER
+        // =========================
+
+        const user = await usermodel.findById(user_id);
+
+        // =========================
+        // GET COMMITTEE
+        // =========================
+
+        const committee =
+            await sharedCommittee.findById(
+                committee_id
+            );
+
+        // =========================
+        // CREATE NOTIFICATION
+        // =========================
+
+        const notification =
+            new notificationmodel({
+
+                receiver_id: admin_id,
+
+                committee_id,
+
+                user: user,
+
+                number_of_committee,
+
+                message:
+                    `${user.name} wants to join "${committee.committee_name}" with ${number_of_committee} committees.`,
+
+                notification_type: 1
+            });
+
+        await notification.save();
+
         res.send("Request sent successfully");
+
     } catch (error) {
+
+        console.log(error);
+
         res.send("Error: " + error);
     }
 });
@@ -333,10 +391,22 @@ app.get('/join-requests/:adminId', async (req, res) => {
 });
 
 app.post('/approve-join-request/:id', async (req, res) => {
-    try {
-        const request = await JoinRequest.findById(req.params.id);
 
-        if (!request) return res.send("Request not found");
+    try {
+
+        const notification = await notificationmodel.findById(req.params.id);
+
+        if (!notification) {
+            return res.send("Notification not found");
+        }
+
+        const request = await JoinRequest.findById(
+            notification.request_id
+        );
+
+        if (!request) {
+            return res.send("Request not found");
+        }
 
         let committee_details = await sharedCommittee.findOne({
             _id: request.committee_id
@@ -388,12 +458,14 @@ app.post('/approve-join-request/:id', async (req, res) => {
 
             // payments for new member
             for (let cycle of allCycles) {
+
                 let exists = await committee_payment.findOne({
                     member_id: nmember._id,
                     cycle_id: cycle._id
                 });
 
                 if (!exists) {
+
                     await new committee_payment({
                         member_id: nmember._id,
                         cycle_id: cycle._id
@@ -409,12 +481,14 @@ app.post('/approve-join-request/:id', async (req, res) => {
             });
 
             for (let member of existingMembers) {
+
                 let exists = await committee_payment.findOne({
                     member_id: member._id,
                     cycle_id: ncycle._id
                 });
 
                 if (!exists) {
+
                     await new committee_payment({
                         member_id: member._id,
                         cycle_id: ncycle._id
@@ -423,15 +497,33 @@ app.post('/approve-join-request/:id', async (req, res) => {
             }
         }
 
-        // 🔥 VERY IMPORTANT
-        await JoinRequest.deleteOne({ _id: req.params.id });
-        console.log("DELETING REQUEST:", req.params.id);
+        // notify user approved
+        await notificationmodel.create({
+
+            receiver_id: request.user_id,
+
+            message:
+                `Your request to join ${committee_details.committee_name} was approved`,
+
+            notification_type: 7
+        });
+
+        // delete request
+        await JoinRequest.deleteOne({
+            _id: request._id
+        });
+
+        // delete notification
+        await notificationmodel.deleteOne({
+            _id: notification._id
+        });
 
         res.send("Approved");
 
     } catch (error) {
+
         console.log(error);
-        res.send(error);
+        res.send(error.toString());
     }
 });
 
@@ -464,12 +556,49 @@ app.post("/accept-invite/:id", async (req, res) => {
     res.send("Joined");
 });
 
-app.delete('/reject-join-request/:id', async (req, res) => {
+app.post('/reject-join-request/:id', async (req, res) => {
+
     try {
-        await JoinRequest.deleteOne({ _id: req.params.id });
+
+        const notification = await notificationmodel.findById(
+            req.params.id
+        );
+
+        if (!notification) {
+            return res.send("Notification not found");
+        }
+
+        const request = await JoinRequest.findById(
+            notification.request_id
+        );
+
+        if (request) {
+
+            await notificationmodel.create({
+
+                receiver_id: request.user_id,
+
+                message:
+                    `Your request to join ${notification.committee_detail.committee_name} was rejected`,
+
+                notification_type: 2
+            });
+
+            await JoinRequest.deleteOne({
+                _id: request._id
+            });
+        }
+
+        await notificationmodel.deleteOne({
+            _id: notification._id
+        });
+
         res.send("Rejected");
+
     } catch (error) {
-        res.send(error);
+
+        console.log(error);
+        res.send(error.toString());
     }
 });
 
@@ -927,12 +1056,21 @@ app.post('/reject-request/:id', async (req, res) => {
 
 })
 
-app.get('/get-notifications', async (req, res) => {
+app.get('/get-notifications/:userId', async (req, res) => {
 
-    let data = await notificationmodel.find().sort({ _id: -1 });
+    try {
 
-    res.send(data);
+        const data = await notificationmodel.find({
+            receiver_id: req.params.userId
+        }).sort({ createdAt: -1 });
 
+        res.send(data);
+
+    } catch (error) {
+
+        console.log(error);
+        res.send(error.toString());
+    }
 });
 
 app.post('/accept-request/:id', async (req, res) => {
