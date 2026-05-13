@@ -136,7 +136,11 @@ class _CommitteeDetailScreenState extends State<CommitteeDetailScreen> {
             onPressed: () async {
               Navigator.pop(context);
 
-              await ApiService().placeBid(widget.committee["_id"], bid.text);
+              await ApiService().placeBid(
+                widget.committee["_id"],
+                bid.text,
+                myMemberId,
+              );
               if (!mounted) return;
 
               ScaffoldMessenger.of(

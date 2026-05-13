@@ -169,7 +169,10 @@ app.put('/deleteprofileimg', async (req, res) => {
 app.put('/updateprofileimg', upload.single('profile_img'), async (req, res) => {
     try {
         let id = req.body._id;
-        let profile_img = req.file
+        const singlefile = req.file;
+        if (!singlefile) {
+            return res.status(400).send({ "error": "No profile image uploaded" });
+        }
         await usermodel.updateOne({ "_id": id }, { profile_img: `/Images/${singlefile.filename}` });
         res.send('profileimg updated');
     }
@@ -192,7 +195,7 @@ app.put('/update-user/:id', upload.single('profile_img'), async (req, res) => {
                     password: data.password,
                     monthly_income: data.monthly_income,
                     phoneno: data.phoneno,
-                    profile_img: `/Images/${file.filename}`
+                    profile_img: `/Images/${singlefile.filename}`
                 });
             let token = jwt.sign({ 'phoneno': data.phoneno }, 'shhh');
             res.clearCookie("phoneno");
@@ -245,6 +248,91 @@ let dates_calculator_function = (sd, dd, dg, cn) => {
     return { "start_date": cycledate, "end_date": end_date, "deadline_date": deadline_date }
 
 }
+
+/**
+ * Shared join acceptance: creates members/cycles/payments and deletes the notification.
+ * @returns {{ ok: true, message: string } | { ok: false, message: string, status: number }}
+ */
+async function acceptJoinMemberByNotification(notificationId, data) {
+    const { committee_id, user_id, number_of_committee } = data;
+    let committee_details = await sharedCommittee.findOne({ '_id': committee_id });
+    if (!committee_details) {
+        return { ok: false, message: 'Committee not found', status: 404 };
+    }
+    if (committee_details.enrollment_period !== true) {
+        return { ok: false, message: 'Enrollment Closed', status: 400 };
+    }
+
+    for (let i = 0; i < number_of_committee; i++) {
+        await sharedCommittee.updateOne(
+            { '_id': committee_id },
+            { $inc: { 'number_of_member': 1 } }
+        );
+        committee_details = await sharedCommittee.findOne({ '_id': committee_id });
+
+        const newmember = new committeemember({
+            'committee_id': committee_id,
+            'user_id': user_id,
+            'turn_number': committee_details.number_of_member
+        });
+        const nmember = await newmember.save();
+
+        const calculated_dates = dates_calculator_function(
+            committee_details.start_date,
+            committee_details.deadline_day,
+            committee_details.days_gap,
+            committee_details.number_of_member
+        );
+        const newcycle = new committeecycle({
+            'committee_id': committee_id,
+            'cycle_number': committee_details.number_of_member,
+            'start_date': calculated_dates.start_date,
+            'end_date': calculated_dates.end_date,
+            'deadline_date': calculated_dates.deadline_date
+        });
+        const ncycle = await newcycle.save();
+
+        const array_of_all_cycles = await committee_cycles.find({ 'committee_id': committee_id });
+
+        for (const value of array_of_all_cycles) {
+            const exists = await committee_payment.findOne({
+                member_id: nmember._id,
+                cycle_id: value._id
+            });
+
+            if (!exists) {
+                await new committee_payment({
+                    member_id: nmember._id,
+                    cycle_id: value._id
+                }).save();
+            }
+        }
+
+        const array_of_already_joined_committee = await committeemember.find({
+            committee_id: committee_id,
+            _id: { $ne: nmember._id },
+            active: true
+        });
+
+        for (const value of array_of_already_joined_committee) {
+            const exists = await committee_payment.findOne({
+                member_id: value._id,
+                cycle_id: ncycle._id
+            });
+
+            if (!exists) {
+                await new committee_payment({
+                    member_id: value._id,
+                    cycle_id: ncycle._id
+                }).save();
+            }
+        }
+    }
+
+    await notificationmodel.deleteOne({ '_id': notificationId });
+    return { ok: true, message: 'Member Added' };
+}
+
 app.post('/shared-committee', async (req, res) => {
     try {
         let data = req.body;
@@ -416,6 +504,10 @@ app.post('/approve-join-request/:id', async (req, res) => {
             _id: request.committee_id
         });
 
+        if (!committee_details) {
+            return res.send("Committee not found");
+        }
+
         if (!committee_details.enrollment_period) {
             return res.send("Enrollment Closed");
         }
@@ -532,32 +624,44 @@ app.post('/approve-join-request/:id', async (req, res) => {
 });
 
 app.post("/invite-member", async (req, res) => {
-    const { committee_id, admin_id, user_id } = req.body;
+    try {
+        const { committee_id, admin_id, user_id } = req.body;
 
-    const notification = new notificationmodel({
-        committee_id,
-        admin_id,
-        user_id,
-        type: "invite"
-    });
+        const notification = new notificationmodel({
+            committee_id,
+            admin_id,
+            user_id,
+            type: "invite"
+        });
 
-    await notification.save();
+        await notification.save();
 
-    res.send("Invitation sent");
+        res.send("Invitation sent");
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 });
 
 app.post("/accept-invite/:id", async (req, res) => {
-    const notif = await notificationmodel.findById(req.params.id);
-
-    await axios.post("http://localhost:3000/accept-request/" + req.params.id, {
-        committee_id: notif.committee_id,
-        user_id: notif.user_id,
-        number_of_committee: 1
-    });
-
-    await notificationmodel.deleteOne({ _id: req.params.id });
-
-    res.send("Joined");
+    try {
+        const notif = await notificationmodel.findById(req.params.id);
+        if (!notif) {
+            return res.status(404).send("Notification not found");
+        }
+        const result = await acceptJoinMemberByNotification(req.params.id, {
+            committee_id: notif.committee_id,
+            user_id: notif.user_id,
+            number_of_committee: 1
+        });
+        if (!result.ok) {
+            return res.status(result.status || 400).send(result.message);
+        }
+        res.send(result.message);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 });
 
 app.post('/reject-join-request/:id', async (req, res) => {
@@ -639,20 +743,31 @@ app.get('/get-all-joined-committees/:id', async (req, res) => {
     }
     catch (error) {
         console.log(error);
+        res.status(500).send(error.toString());
     }
 
 })
 app.get('/get-all-committees-of-admin/:id', async (req, res) => {
-    let id = req.params.id;
-    let data = await sharedcommittees.find({ 'admin_id': id });
-    res.send(data);
+    try {
+        let id = req.params.id;
+        let data = await sharedcommittees.find({ 'admin_id': id });
+        res.send(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 app.get('/get-all-personal-committees/:id', async (req, res) => {
-    let data = await personalCommittee.find({
-        committee_admin_id: req.params.id
-    });
-    res.send(data);
+    try {
+        let data = await personalCommittee.find({
+            committee_admin_id: req.params.id
+        });
+        res.send(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 app.get('/get-all-admin-committees/:id', async (req, res) => {
@@ -717,6 +832,10 @@ app.get('/personal-progress/:id', async (req, res) => {
         const committee =
             await personalCommittee.findById(id);
 
+        if (!committee) {
+            return res.status(404).json({ error: 'Committee not found' });
+        }
+
         const paidCount =
             await personalCommitteePayments.countDocuments({
                 committee_id: id
@@ -741,42 +860,47 @@ app.get('/personal-progress/:id', async (req, res) => {
 
 ////////////////////////////////////////////////// Committee details /////////////////////////////////////////////////
 app.post('/this-month-dues', async (req, res) => {
-    const today = new Date(req.body.today);
-    today.setUTCHours(0, 0, 0, 0);
+    try {
+        const today = new Date(req.body.today);
+        today.setUTCHours(0, 0, 0, 0);
 
-    const committee_id = new mongoose.Types.ObjectId(req.body.committee_id);
-    const member_id = new mongoose.Types.ObjectId(req.body.committee_member_id);//joining the committee_cycle_table with the comittee_payments_table.
+        const committee_id = new mongoose.Types.ObjectId(req.body.committee_id);
+        const member_id = new mongoose.Types.ObjectId(req.body.committee_member_id);//joining the committee_cycle_table with the comittee_payments_table.
 
-    let data = await committeecycle.aggregate([
-        {//aggrigate work in step by step in {}'s
-            //here i am applying condition to the first table 
-            $match: {
-                'committee_id': committee_id,
-                'start_date': { $lte: today },
-                'active': true
+        let data = await committeecycle.aggregate([
+            {//aggrigate work in step by step in {}'s
+                //here i am applying condition to the first table 
+                $match: {
+                    'committee_id': committee_id,
+                    'start_date': { $lte: today },
+                    'active': true
+                }
+            },
+            {// here i join both table.
+                $lookup: {
+                    from: 'committee_payments',
+                    localField: '_id',
+                    foreignField: 'cycle_id',
+                    as: 'payment_details'
+                }
+            },
+            {//here i open the 2nd table array to do condition work on it
+                $unwind: '$payment_details'
+            },
+            { //here i do condition work on the 2nd table.
+                $match: {
+                    'payment_details.member_id': member_id,
+                    'payment_details.payment_status': false
+                }
             }
-        },
-        {// here i join both table.
-            $lookup: {
-                from: 'committee_payments',
-                localField: '_id',
-                foreignField: 'cycle_id',
-                as: 'payment_details'
-            }
-        },
-        {//here i open the 2nd table array to do condition work on it
-            $unwind: '$payment_details'
-        },
-        { //here i do condition work on the 2nd table.
-            $match: {
-                'payment_details.member_id': member_id,
-                'payment_details.payment_status': false
-            }
-        }
 
-    ])
+        ])
 
-    res.send(data);
+        res.send(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 
 });
 
@@ -907,47 +1031,52 @@ async function committee_winners() {
 }
 
 app.post('/current-cycle-committee-winner', async (req, res) => {
-    const date = new Date(req.body.today);
-    let committee_id = new mongoose.Types.ObjectId(req.body.committee_id);
-    date.setUTCHours(0, 0, 0, 0); //  Set the time to exactly 00:00:00.000 in UTC
-    let data = await committeecycle.aggregate([
-        {
-            $match: {
-                'committee_id': committee_id,
-                'end_date': date,
+    try {
+        const date = new Date(req.body.today);
+        let committee_id = new mongoose.Types.ObjectId(req.body.committee_id);
+        date.setUTCHours(0, 0, 0, 0); //  Set the time to exactly 00:00:00.000 in UTC
+        let data = await committeecycle.aggregate([
+            {
+                $match: {
+                    'committee_id': committee_id,
+                    'end_date': date,
+                }
             }
-        }
-        ,
-        {
-            $lookup: {
-                from: 'committee_members',
-                localField: 'cycle_winner_id',
-                foreignField: '_id',
-                as: 'member'
+            ,
+            {
+                $lookup: {
+                    from: 'committee_members',
+                    localField: 'cycle_winner_id',
+                    foreignField: '_id',
+                    as: 'member'
+                }
             }
-        }
-        ,
-        {
-            // preserveNullAndEmptyArrays ensures you don't lose the cycle if no winner is found
-            $unwind: { path: '$member', preserveNullAndEmptyArrays: true }
-        }
-        ,
-        {
-            $lookup: {
-                from: 'users',
-                localField: 'member.user_id',
-                foreignField: '_id',
-                as: 'user_detail'
+            ,
+            {
+                // preserveNullAndEmptyArrays ensures you don't lose the cycle if no winner is found
+                $unwind: { path: '$member', preserveNullAndEmptyArrays: true }
             }
-        }
-        ,
-        {
-            $unwind: '$user_detail'
-        }
+            ,
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'member.user_id',
+                    foreignField: '_id',
+                    as: 'user_detail'
+                }
+            }
+            ,
+            {
+                $unwind: { path: '$user_detail', preserveNullAndEmptyArrays: true }
+            }
 
-    ])
+        ])
 
-    res.send(data[0]);
+        res.send(data.length ? data[0] : null);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 
 })
 
@@ -995,28 +1124,33 @@ app.get('/remaining-members/:id', async (req, res) => {
 ////////////////////////////////////////////////   join Committee   //////////////////////////////////////////////////
 
 app.get('/committee-of-this-no/:number', async (req, res) => {
-    let phoneno = req.params.number;
-    let data = await usermodel.aggregate([
-        {
-            $match: { 'phoneno': phoneno }
-        },
-        {
-            $lookup: {
-                from: 'shared_committees',
-                localField: '_id',
-                foreignField: 'admin_id',
-                as: 'committee_detail'
+    try {
+        let phoneno = req.params.number;
+        let data = await usermodel.aggregate([
+            {
+                $match: { 'phoneno': phoneno }
+            },
+            {
+                $lookup: {
+                    from: 'shared_committees',
+                    localField: '_id',
+                    foreignField: 'admin_id',
+                    as: 'committee_detail'
+                }
+            },
+            {
+                $unwind: '$committee_detail'
+            },
+            {
+                $match: { 'committee_detail.enrollment_period': true }
             }
-        },
-        {
-            $unwind: '$committee_detail'
-        },
-        {
-            $match: { 'committee_detail.enrollment_period': true }
-        }
-    ])
+        ])
 
-    res.send(data);
+        res.send(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 ////////////////////////////////////////////     Notification   ///////////////////////////////////////////////////
@@ -1029,6 +1163,7 @@ app.post('/create-notification', async (req, res) => {
     }
     catch (error) {
         console.log(error);
+        res.status(500).send(error.toString());
     }
 })
 
@@ -1043,6 +1178,7 @@ app.get('/all-notifications', async (req, res) => {
     }
     catch (error) {
         console.log(error);
+        res.status(500).send(error.toString());
     }
 })
 //*********when a user request to join committee***********/
@@ -1056,6 +1192,7 @@ app.post('/reject-request/:id', async (req, res) => {
     }
     catch (error) {
         console.log(error);
+        res.status(500).send(error.toString());
     }
 
 })
@@ -1078,100 +1215,30 @@ app.get('/get-notifications/:userId', async (req, res) => {
 });
 
 app.post('/accept-request/:id', async (req, res) => {
-    let data = req.body;
-    ///first i check enrollment period is true ..because if admin accept the request late the program not crash.
-    let committee_details = await sharedCommittee.findOne({ '_id': data.committee_id });
-    if (committee_details.enrollment_period === true) {
-
-        for (let i = 0; i < data.number_of_committee; i++) {
-            await sharedCommittee.updateOne(
-                { '_id': data.committee_id },
-                { $inc: { 'number_of_member': 1 } }
-            );//increment member by 1 so i can easily calculate the cycle details.
-            committee_details = await sharedCommittee.findOne({ '_id': data.committee_id });//again fetch the updated committee details so i can use them .
-
-            const newmember = new committeemember({
-                'committee_id': data.committee_id,
-                'user_id': data.user_id,
-                'turn_number': committee_details.number_of_member
-            });
-            let nmember = await newmember.save();//create new member of the committee
-
-            //start_date==sd   deadline_date===dd  days_gap===dg   cyclenumber>>number_of_member in committee==cn  
-            let calculated_dates = dates_calculator_function(committee_details.start_date, committee_details.deadline_day, committee_details.days_gap, committee_details.number_of_member);
-            const newcycle = new committeecycle({ 'committee_id': data.committee_id, 'cycle_number': committee_details.number_of_member, 'start_date': calculated_dates.start_date, 'end_date': calculated_dates.end_date, 'deadline_date': calculated_dates.deadline_date });
-            let ncycle = await newcycle.save();
-            //get create payments of all the cycle for new member.
-
-            let array_of_all_cycles = await committee_cycles.find({ 'committee_id': data.committee_id })
-
-
-            // create payments for NEW MEMBER in ALL cycles
-            for (let value of array_of_all_cycles) {
-                let exists = await committee_payment.findOne({
-                    member_id: nmember._id,
-                    cycle_id: value._id
-                });
-
-                if (!exists) {
-                    let newpayment = new committee_payment({
-                        member_id: nmember._id,
-                        cycle_id: value._id
-                    });
-                    await newpayment.save();
-                }
-            }
-
-
-            //create payment of all members with the ids of previous members.
-
-            let array_of_already_joined_committee = await committeemember.find({
-                committee_id: data.committee_id,   // ✅ IMPORTANT FILTER
-                _id: { $ne: nmember._id },
-                active: true
-            });            //now i will create payment to all already joined memeber of new cycle except that one that i currently saved
-            //beacuse i have already created all the payment of his.
-
-            for (let value of array_of_already_joined_committee) {
-                let exists = await committee_payment.findOne({
-                    member_id: value._id,
-                    cycle_id: ncycle._id
-                });
-
-                if (!exists) {
-                    let newpayment = new committee_payment({
-                        member_id: value._id,
-                        cycle_id: ncycle._id
-                    });
-                    await newpayment.save();
-                }
-            }
-
+    try {
+        const result = await acceptJoinMemberByNotification(req.params.id, req.body);
+        if (!result.ok) {
+            return res.status(result.status || 400).send(result.message);
         }
-        await notificationmodel.deleteOne({ '_id': req.params.id });
-        res.send("Member Added");
+        res.send(result.message);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
     }
-    else {
-        res.send("Enrollment Closed");
-    }
-
-})
+});
 //*******************   used when handle payment notification     ************************/
 app.delete('/clear-payment-notification/:id', async (req, res) => {
-    let notification_id = req.params.id;
-    await notificationmodel.deleteOne({ '_id': notification_id });
-    res.send('Notification Cleared')
+    try {
+        let notification_id = req.params.id;
+        await notificationmodel.deleteOne({ '_id': notification_id });
+        res.send('Notification Cleared')
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 
-//*********************************************** */
-app.post('/invite-member', async (req, res) => {
-
-})
-app.post('/accept-invite', async (req, res) => {
-
-})
-//
 app.delete('/clear-notification/:id', async (req, res) => {
     try {
         await notificationmodel.deleteOne({ '_id': req.params.id });
@@ -1179,25 +1246,34 @@ app.delete('/clear-notification/:id', async (req, res) => {
     }
     catch (error) {
         console.log(error);
+        res.status(500).send(error.toString());
     }
 });
 
 //////////////////////////////////////////    Bidding   //////////////////////////////////////////////
 app.get('/get-details-of-committee/:id', async (req, res) => {
-    let id = req.params.id;
-    let committee_detail = await sharedcommittees.findOne({ '_id': id });
-    res.send(committee_detail);
+    try {
+        let id = req.params.id;
+        let committee_detail = await sharedcommittees.findOne({ '_id': id });
+        res.send(committee_detail);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 app.post('/current-bidding-cycle', async (req, res) => {
     try {
 
         let obj = req.body;//{committee_id,member_id,amount}
+        if (!obj.committee_id || !obj.member_id || obj.amount == null) {
+            return res.status(400).send("committee_id, member_id, and amount are required");
+        }
         let date = new Date();
         date.setUTCHours(0, 0, 0, 0);
         let cycle_data = await committee_cycles.findOne({
             'committee_id': obj.committee_id,
             'active': true,
-            'cycle_winner': null,
+            'cycle_winner_id': null,
             'start_date': { $lte: date },
             'end_date': { $gt: date }
         })
@@ -1212,6 +1288,7 @@ app.post('/current-bidding-cycle', async (req, res) => {
 
     } catch (error) {
         console.log(error);
+        res.status(500).send(error.toString());
     }
 
 
@@ -1226,7 +1303,7 @@ app.get('/current-cycle-winner-bidder-of-committee/:id', async (req, res) => {
         let cycle_data = await committee_cycles.findOne({
             committee_id: id,
             active: true,
-            cycle_winner: null,
+            cycle_winner_id: null,
             start_date: { $lte: date },
             end_date: { $gt: date }
         });
@@ -1305,7 +1382,8 @@ app.post('/get-all-member-comittee', async (req, res) => {
         res.send(data);
     }
     catch (error) {
-        console.log(error)
+        console.log(error);
+        res.status(500).send(error.toString());
     }
 
 });
@@ -1367,37 +1445,43 @@ app.delete('/delete-committee/:id', async (req, res) => {
         res.send('committee_deleted');
     }
     catch (error) {
-        console.log(error)
+        console.log(error);
+        res.status(500).send(error.toString());
     }
 
 })
 
 app.get('/get-all-members-of-committee/:id', async (req, res) => {
     //this contain all the members including the committee admin
-    let committee_id = new mongoose.Types.ObjectId(req.params.id);
+    try {
+        let committee_id = new mongoose.Types.ObjectId(req.params.id);
 
-    let data = await committee_members.aggregate([
-        {
-            $match: {
-                'committee_id': committee_id,
-                'active': true
+        let data = await committee_members.aggregate([
+            {
+                $match: {
+                    'committee_id': committee_id,
+                    'active': true
+                }
             }
-        }
-        ,
-        {
-            $lookup: {
-                from: 'users',
-                localField: 'user_id',
-                foreignField: '_id',
-                as: 'user_detail'
+            ,
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'user_id',
+                    foreignField: '_id',
+                    as: 'user_detail'
+                }
             }
-        }
-        ,
-        {
-            $unwind: '$user_detail'
-        }
-    ])
-    res.send(data);
+            ,
+            {
+                $unwind: '$user_detail'
+            }
+        ])
+        res.send(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 
 })
 
@@ -1488,6 +1572,7 @@ app.put('/decrement-member-rating', async (req, res) => {
 
     } catch (error) {
         console.log(error);
+        res.status(500).send(error.toString());
     }
 });
 
@@ -1509,42 +1594,47 @@ app.get('/all-cycle-till-now-committee/:id', async (req, res) => {
 });
 
 app.get('/get-payment-of-cycle/:id', async (req, res) => {
-    let cycle_id = req.params.id;
-    let data = await committee_payment.aggregate([
-        {
-            $match: {
-                'cycle_id': new mongoose.Types.ObjectId(cycle_id)
+    try {
+        let cycle_id = req.params.id;
+        let data = await committee_payment.aggregate([
+            {
+                $match: {
+                    'cycle_id': new mongoose.Types.ObjectId(cycle_id)
+                }
             }
-        }
-        ,
-        {
-            $lookup: {
-                from: 'committee_members',
-                localField: 'member_id',
-                foreignField: '_id',
-                as: 'member_detail'
+            ,
+            {
+                $lookup: {
+                    from: 'committee_members',
+                    localField: 'member_id',
+                    foreignField: '_id',
+                    as: 'member_detail'
+                }
             }
-        }
-        ,
-        {
-            $unwind: '$member_detail'
-        }
-        ,
-        {
-            $lookup: {
-                from: 'users',
-                localField: 'member_detail.user_id',
-                foreignField: '_id',
-                as: 'user_detail'
+            ,
+            {
+                $unwind: '$member_detail'
             }
-        }
-        ,
-        {
-            $unwind: '$user_detail'
-        }
-    ])
+            ,
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'member_detail.user_id',
+                    foreignField: '_id',
+                    as: 'user_detail'
+                }
+            }
+            ,
+            {
+                $unwind: '$user_detail'
+            }
+        ])
 
-    res.send(data);
+        res.send(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 let payment_notification = async (member_id, cycle_id, committee_detail, payment_type) => {
@@ -1565,6 +1655,9 @@ let payment_notification = async (member_id, cycle_id, committee_detail, payment
             $unwind: '$user_detail'
         }
     ]);
+    if (!temp || temp.length === 0) {
+        throw new Error('Member not found for payment notification');
+    }
     user_detail = temp[0].user_detail;
 
 
@@ -1599,6 +1692,9 @@ app.post('/payment-handle', upload.single('payment_img'), async (req, res) => {
                 { $set: { 'payment_type': payment_type, 'payment_status': true } });
         }
         else {
+            if (!req.file) {
+                return res.status(400).send("Payment image required for non-cash payments");
+            }
             let payment_img = req.file.filename;
             await committee_payment.updateOne(
                 { cycle_id, member_id },
@@ -1607,7 +1703,8 @@ app.post('/payment-handle', upload.single('payment_img'), async (req, res) => {
         res.send("Approvel Send to committee Admin");
     }
     catch (error) {
-        console.log(error)
+        console.log(error);
+        res.status(500).send(error.toString());
     }
 
 })
@@ -1648,34 +1745,44 @@ app.put('/approve-payment', async (req, res) => {
 });
 
 app.put('/reject-payment', async (req, res) => {
-    let obj = req.body;//{ cycle_id, member_id, user_id,committee_id, message }
-    await committee_payment.updateOne({ cycle_id: obj.cycle_id, member_id: obj.member_id },
-        { $set: { payment_type: 'Not Paid yet', payment_img: null, payment_status: false, approval: false } });
-    let newnotification = notificationmodel({
-        receiver_id: obj.user_id,
-        committee_id: obj.committee_id,
-        member_id: obj.member_id,
-        cycle_id: obj.cycle_id,
-        message: obj.message,
-        notification_type: 5
-    });
-    await newnotification.save();
-    res.send('Payment Reject Successfully');
+    try {
+        let obj = req.body;//{ cycle_id, member_id, user_id,committee_id, message }
+        await committee_payment.updateOne({ cycle_id: obj.cycle_id, member_id: obj.member_id },
+            { $set: { payment_type: 'Not Paid yet', payment_img: null, payment_status: false, approval: false } });
+        let newnotification = new notificationmodel({
+            receiver_id: obj.user_id,
+            committee_id: obj.committee_id,
+            member_id: obj.member_id,
+            cycle_id: obj.cycle_id,
+            message: obj.message,
+            notification_type: 5
+        });
+        await newnotification.save();
+        res.send('Payment Reject Successfully');
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 app.put('/admin-pay-member-payment', async (req, res) => {
-    let obj = req.body //{member_id,cycle_id}
-    await committee_payment.updateOne(
-        { member_id: obj.member_id, cycle_id: obj.cycle_id },
-        {
-            $set: {
-                payment_type: 'cash',
-                payment_status: true,
-                approval: true,
+    try {
+        let obj = req.body //{member_id,cycle_id}
+        await committee_payment.updateOne(
+            { member_id: obj.member_id, cycle_id: obj.cycle_id },
+            {
+                $set: {
+                    payment_type: 'cash',
+                    payment_status: true,
+                    approval: true,
+                }
             }
-        }
-    )
-    res.send("You have Successfull paid payment of a member.")
+        )
+        res.send("You have Successfull paid payment of a member.")
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 //////////////////////////////////////////////////
 app.post('/exit-committee', async (req, res) => {
@@ -1814,7 +1921,7 @@ app.post('/exit-committee', async (req, res) => {
 
                 const calcAmount = Math.round(data.committee_details.amount) / (data.committee_details.number_of_member - 1);
                 const temp_amount = data.committee_details.amount + calcAmount;
-                await sharedcommittees.updateOne({ committee_id: committee_id }, { $set: { amount: temp_amount } });
+                await sharedcommittees.updateOne({ _id: committee_id }, { $set: { amount: temp_amount } });
             }
         }
 
@@ -1857,68 +1964,85 @@ app.post('/exit-committee', async (req, res) => {
 });
 
 app.get('/get-all-refunds/:id', async (req, res) => {
-    let committee_id = new mongoose.Types.ObjectId(req.params.id);
-    let data = await committee_refund.find({ committee_id });
-    res.send(data);
+    try {
+        let committee_id = new mongoose.Types.ObjectId(req.params.id);
+        let data = await committee_refund.find({ committee_id });
+        res.send(data);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 app.put('/pay-refund', upload.single('payment_img'), async (req, res) => {
-    let obj = req.body;
-    //{committee_id
-    // ,user_id {who pay the return amount}
-    // ,payment_type
-    // ,message
-    // ,committee_admin_id,
-    // amount}
-    console.log(obj);
-    let singlefile = req.file;
-    if (singlefile) {
-        await committee_refund.updateOne({ 'committee_id': obj.committee_id, 'user_id': obj.user_id }, {
-            $set: {
-                payment_type: obj.payment_type,
-                payment_status: true,
-                payment_img: singlefile.filename
-            }
-        })
+    try {
+        let obj = req.body;
+        console.log(obj);
+        let singlefile = req.file;
+        if (singlefile) {
+            await committee_refund.updateOne({ 'committee_id': obj.committee_id, 'user_id': obj.user_id }, {
+                $set: {
+                    payment_type: obj.payment_type,
+                    payment_status: true,
+                    payment_img: singlefile.filename
+                }
+            })
 
-    }
-    else {
-        await committee_refund.updateOne({ 'committee_id': obj.committee_id, 'user_id': obj.user_id }, {
-            $set: {
-                payment_type: obj.payment_type,
-                payment_status: true
-            }
-        })
-    }
+        }
+        else {
+            await committee_refund.updateOne({ 'committee_id': obj.committee_id, 'user_id': obj.user_id }, {
+                $set: {
+                    payment_type: obj.payment_type,
+                    payment_status: true
+                }
+            })
+        }
 
-    let adminnotification = await notificationmodel({//user_id  committee_id  amount message
-        receiver_id: obj.committee_detail.admin_id,
-        committee_id: obj.committee_details._id,
-        member_id: obj.user_id,
-        amount: obj.amount,
-        message: obj.message,
-        notification_type: 9
-    })
-    adminnotification.save();
-    res.send("Approval Sent to Admin.");
+        let committeeDetailRaw =
+            obj.committee_detail ?? obj['committee_detail'];
+        if (committeeDetailRaw == null) {
+            return res.status(400).send('committee_detail is required');
+        }
+            committeeDetailRaw = JSON.parse(committeeDetailRaw);
+        }
+        const adminnotification = new notificationmodel({
+            receiver_id: committeeDetailRaw.admin_id,
+            committee_id: committeeDetailRaw._id,
+            member_id: obj.user_id,
+            amount: obj.amount,
+            message: obj.message,
+            notification_type: 9
+        });
+        await adminnotification.save();
+        res.send("Approval Sent to Admin.");
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
 
 app.put('/reject-refund', async (req, res) => {
-    let obj = req.body;//{committee_id,user_id,message} message for reason of rejection
-    console.log(obj);
-    await committee_refund.updateOne({ 'committee_id': obj.committee_id, 'user_id': obj.user_id }, {
-        $set: {
-            payment_type: 'Not Paid yet',
-            payment_status: false
-        }
-    })
+    try {
+        let obj = req.body;//{committee_id,user_id,message} message for reason of rejection
+        console.log(obj);
+        await committee_refund.updateOne({ 'committee_id': obj.committee_id, 'user_id': obj.user_id }, {
+            $set: {
+                payment_type: 'Not Paid yet',
+                payment_status: false
+            }
+        })
 
-    let newnotif = new notificationmodel({
-        receiver_id: obj.user_id,
-        member_id: obj.user_id,
-        committee_id: obj.committee_id,
-        message: obj.message,
-        notification_type: 5
-    })
-    await newnotif.save();
+        let newnotif = new notificationmodel({
+            receiver_id: obj.user_id,
+            member_id: obj.user_id,
+            committee_id: obj.committee_id,
+            message: obj.message,
+            notification_type: 5
+        })
+        await newnotif.save();
+        res.send('Refund rejection recorded');
+    } catch (error) {
+        console.error(error);
+        res.status(500).send(error.toString());
+    }
 })
