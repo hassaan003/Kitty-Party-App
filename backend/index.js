@@ -331,6 +331,10 @@ app.post("/join-request", async (req, res) => {
 
                 number_of_committee,
 
+                request_id: request._id,
+
+                committee_detail: committee,
+
                 message:
                     `${user.name} wants to join "${committee.committee_name}" with ${number_of_committee} committees.`,
 

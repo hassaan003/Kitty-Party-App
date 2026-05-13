@@ -8,6 +8,9 @@ const notificationSchema = new mongoose.Schema({
     committee_id: {
         type: mongoose.Types.ObjectId
     },
+    request_id: {
+        type: mongoose.Types.ObjectId
+    },
 
     user: {
         type: Object
