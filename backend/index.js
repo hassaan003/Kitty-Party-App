@@ -12,9 +12,6 @@ import committeemember from './Models/committee_member.model.js'
 import committeecycle from './Models/committee_cycle.model.js'
 import notificationmodel from './Models/notification.model.js'
 import committee_payment from './Models/committee_payment.model.js'
-import committee_cycles from './Models/committee_cycle.model.js'
-import sharedcommittees from './Models/shared_Committee.model.js'
-import committee_members from './Models/committee_member.model.js'
 import cycle_biddings from './Models/cycle_bidding.model.js'
 import users from './Models/user.model.js'
 import committee_refund from './Models/committee_refund.model.js'
@@ -292,7 +289,7 @@ async function acceptJoinMemberByNotification(notificationId, data) {
         });
         const ncycle = await newcycle.save();
 
-        const array_of_all_cycles = await committee_cycles.find({ 'committee_id': committee_id });
+        const array_of_all_cycles = await committeecycle.find({ 'committee_id': committee_id });
 
         for (const value of array_of_all_cycles) {
             const exists = await committee_payment.findOne({
@@ -548,7 +545,7 @@ app.post('/approve-join-request/:id', async (req, res) => {
 
             let ncycle = await newcycle.save();
 
-            let allCycles = await committee_cycles.find({
+            let allCycles = await committeecycle.find({
                 committee_id: request.committee_id
             });
 
@@ -713,7 +710,7 @@ app.post('/reject-join-request/:id', async (req, res) => {
 app.get('/get-all-joined-committees/:id', async (req, res) => {
     try {
         let user_id = new mongoose.Types.ObjectId(req.params.id);
-        let data = await committeemember.aggregate([//joining committee_members with committee_details table
+        let data = await committeemember.aggregate([//joining committeemember with committee_details table
             {
                 $match: {
                     user_id: user_id,
@@ -750,7 +747,7 @@ app.get('/get-all-joined-committees/:id', async (req, res) => {
 app.get('/get-all-committees-of-admin/:id', async (req, res) => {
     try {
         let id = req.params.id;
-        let data = await sharedcommittees.find({ 'admin_id': id });
+        let data = await sharedCommittee.find({ 'admin_id': id });
         res.send(data);
     } catch (error) {
         console.error(error);
@@ -774,7 +771,7 @@ app.get('/get-all-admin-committees/:id', async (req, res) => {
     try {
         const id = req.params.id;
 
-        const shared = await sharedcommittees.find({
+        const shared = await sharedCommittee.find({
             admin_id: id
         });
 
@@ -911,7 +908,7 @@ async function committee_winners() {
         const today = new Date();
         today.setUTCHours(0, 0, 0, 0);
         //////////////////////////////////////////////////////////////////////////////saraa cycle jis k winner select karnaa ha
-        let cycles = await committee_cycles.aggregate([
+        let cycles = await committeecycle.aggregate([
             {
                 $match: { 'end_date': today, 'cycle_winner_id': null, 'active': true }
             },
@@ -939,7 +936,7 @@ async function committee_winners() {
             let all_members_of_current = [];
 
             if (member_arrange_type === '1') {
-                all_members_of_current = await committee_members.aggregate([
+                all_members_of_current = await committeemember.aggregate([
                     {
                         $match: { 'committee_id': value.committee_id, 'got_the_committee': false, active: true }
                     },
@@ -950,7 +947,7 @@ async function committee_winners() {
                 ]);
             }
             else {
-                all_members_of_current = await committee_members.aggregate([
+                all_members_of_current = await committeemember.aggregate([
                     {
                         $match: { 'committee_id': value.committee_id, 'got_the_committee': false, active: true }
                     },
@@ -1014,7 +1011,7 @@ async function committee_winners() {
 
             ///////////////////////////////////////////////////////////////////////  yehaa ma winner save karoo ga.
             if (winner_id) {
-                await committee_cycles.updateOne({ 'committee_id': committee_id, '_id': cycle_id }, { $set: { 'cycle_winner_id': winner_id } });
+                await committeecycle.updateOne({ 'committee_id': committee_id, '_id': cycle_id }, { $set: { 'cycle_winner_id': winner_id } });
                 await committeemember.updateOne({ '_id': winner_id }, { $set: { 'got_the_committee': true } });
                 if (enrollment_period) {
                     await sharedCommittee.updateOne({ '_id': committee_id }, { $set: { 'enrollment_period': false } });
@@ -1254,7 +1251,7 @@ app.delete('/clear-notification/:id', async (req, res) => {
 app.get('/get-details-of-committee/:id', async (req, res) => {
     try {
         let id = req.params.id;
-        let committee_detail = await sharedcommittees.findOne({ '_id': id });
+        let committee_detail = await sharedCommittee.findOne({ '_id': id });
         res.send(committee_detail);
     } catch (error) {
         console.error(error);
@@ -1270,7 +1267,7 @@ app.post('/current-bidding-cycle', async (req, res) => {
         }
         let date = new Date();
         date.setUTCHours(0, 0, 0, 0);
-        let cycle_data = await committee_cycles.findOne({
+        let cycle_data = await committeecycle.findOne({
             'committee_id': obj.committee_id,
             'active': true,
             'cycle_winner_id': null,
@@ -1300,7 +1297,7 @@ app.get('/current-cycle-winner-bidder-of-committee/:id', async (req, res) => {
         let date = new Date();
         date.setUTCHours(0, 0, 0, 0);
 
-        let cycle_data = await committee_cycles.findOne({
+        let cycle_data = await committeecycle.findOne({
             committee_id: id,
             active: true,
             cycle_winner_id: null,
@@ -1322,7 +1319,7 @@ app.get('/current-cycle-winner-bidder-of-committee/:id', async (req, res) => {
 
         let winner_bidder = all_bidders[0];
 
-        let user = await committee_members.aggregate([
+        let user = await committeemember.aggregate([
             { $match: { _id: winner_bidder.member_id } },
             {
                 $lookup: {
@@ -1358,7 +1355,7 @@ app.post('/get-all-member-comittee', async (req, res) => {
     try {
         let { committee_id, admin_id } = req.body;
 
-        const data = await committee_members.aggregate([
+        const data = await committeemember.aggregate([
             {
                 $match: {
                     committee_id: new mongoose.Types.ObjectId(committee_id),
@@ -1407,7 +1404,7 @@ app.post('/new-committee-admin', async (req, res) => {
         }
 
         // 4. Check new admin is member
-        let isMember = await committee_members.findOne({
+        let isMember = await committeemember.findOne({
             committee_id: committee_id,
             user_id: new_admin_id,
             active: true
@@ -1434,13 +1431,13 @@ app.post('/new-committee-admin', async (req, res) => {
 app.delete('/delete-committee/:id', async (req, res) => {
     try {
         let committee_id = req.params.id;
-        await sharedcommittees.deleteOne({ '_id': committee_id });
-        await committee_members.deleteMany({ 'committee_id': committee_id });
-        let all_cycle_id = await committee_cycles.find({ 'committee_id': committee_id }, { '_id': 1 })//[{_id:23123},{}]
+        await sharedCommittee.deleteOne({ '_id': committee_id });
+        await committeemember.deleteMany({ 'committee_id': committee_id });
+        let all_cycle_id = await committeecycle.find({ 'committee_id': committee_id }, { '_id': 1 })//[{_id:23123},{}]
         all_cycle_id.forEach(async (value, index) => {
             await committee_payment.deleteMany({ 'cycle_id': value._id });
             await cycle_biddings.deleteMany({ 'cycle_id': value._id });
-            await committee_cycles.deleteOne({ '_id': value._id });
+            await committeecycle.deleteOne({ '_id': value._id });
         })
         res.send('committee_deleted');
     }
@@ -1456,7 +1453,7 @@ app.get('/get-all-members-of-committee/:id', async (req, res) => {
     try {
         let committee_id = new mongoose.Types.ObjectId(req.params.id);
 
-        let data = await committee_members.aggregate([
+        let data = await committeemember.aggregate([
             {
                 $match: {
                     'committee_id': committee_id,
@@ -1492,7 +1489,7 @@ app.put('/increment-member-rating', async (req, res) => {
         const { user_id, member_id } = req.body;
 
         // Increment only if rating is less than 5
-        const updateResult = await committee_members.updateOne(
+        const updateResult = await committeemember.updateOne(
             { _id: member_id, user_rating: { $lt: 5 } },
             { $inc: { user_rating: 1 } }
         );
@@ -1502,7 +1499,7 @@ app.put('/increment-member-rating', async (req, res) => {
         }
 
         // Recalculate average
-        const all_ratings = await committee_members.find(
+        const all_ratings = await committeemember.find(
             { user_id: user_id },
             { user_rating: 1 }
         );
@@ -1537,7 +1534,7 @@ app.put('/decrement-member-rating', async (req, res) => {
         const { user_id, member_id } = req.body;
 
         // Decrement only if rating is greater than 1
-        const updateResult = await committee_members.updateOne(
+        const updateResult = await committeemember.updateOne(
             { _id: member_id, user_rating: { $gt: 1 } },
             { $inc: { user_rating: -1 } }
         );
@@ -1547,7 +1544,7 @@ app.put('/decrement-member-rating', async (req, res) => {
         }
 
         // Recalculate average so i can update the actual user value.
-        const all_ratings = await committee_members.find(
+        const all_ratings = await committeemember.find(
             { user_id: user_id },
             { user_rating: 1 }
         );
@@ -1582,7 +1579,7 @@ app.get('/all-cycle-till-now-committee/:id', async (req, res) => {
     try {
         let committeeId = req.params.id;
 
-        let data = await committee_cycles.find({
+        let data = await committeecycle.find({
             committee_id: new mongoose.Types.ObjectId(committeeId)
         }).sort({ cycle_number: 1 });
 
@@ -1639,7 +1636,7 @@ app.get('/get-payment-of-cycle/:id', async (req, res) => {
 
 let payment_notification = async (member_id, cycle_id, committee_detail, payment_type) => {
     let user_detail;
-    let temp = await committee_members.aggregate([
+    let temp = await committeemember.aggregate([
         {
             $match: { '_id': new mongoose.Types.ObjectId(member_id) }
         },
@@ -1844,7 +1841,7 @@ app.post('/exit-committee', async (req, res) => {
                 }
             } else {
                 // If member DID NOT get the committee
-                const winners = await committee_members.find({
+                const winners = await committeemember.find({
                     committee_id: committee_id,
                     got_the_committee: true
                 });
@@ -1921,12 +1918,12 @@ app.post('/exit-committee', async (req, res) => {
 
                 const calcAmount = Math.round(data.committee_details.amount) / (data.committee_details.number_of_member - 1);
                 const temp_amount = data.committee_details.amount + calcAmount;
-                await sharedcommittees.updateOne({ _id: committee_id }, { $set: { amount: temp_amount } });
+                await sharedCommittee.updateOne({ _id: committee_id }, { $set: { amount: temp_amount } });
             }
         }
 
         // 5. Cleanup and Status Updates
-        await committee_members.updateOne(
+        await committeemember.updateOne(
             { _id: member_id, committee_id: committee_id },
             { $set: { active: false } }
         );
@@ -1942,7 +1939,7 @@ app.post('/exit-committee', async (req, res) => {
         });
 
         // FIX: Find the cycle first and check if it exists before using its ID
-        const updated_cycle = await committee_cycles.findOneAndUpdate(
+        const updated_cycle = await committeecycle.findOneAndUpdate(
             { committee_id: committee_id },
             { $set: { active: false } },
             { sort: { cycle_number: -1 }, new: true }
@@ -2003,6 +2000,7 @@ app.put('/pay-refund', upload.single('payment_img'), async (req, res) => {
         if (committeeDetailRaw == null) {
             return res.status(400).send('committee_detail is required');
         }
+        if (typeof committeeDetailRaw === 'string') {
             committeeDetailRaw = JSON.parse(committeeDetailRaw);
         }
         const adminnotification = new notificationmodel({
