@@ -149,17 +149,15 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
               boxField("Deadline Day", deadline, numeric: true),
 
               _label("Committee Saving Type"),
-              RadioListTile(
-                value: "personal",
+              RadioGroup<String>(
                 groupValue: savingType,
-                title: const Text("Personal"),
                 onChanged: (v) => setState(() => savingType = v!),
-              ),
-              RadioListTile(
-                value: "shared",
-                groupValue: savingType,
-                title: const Text("Shared"),
-                onChanged: (v) => setState(() => savingType = v!),
+                child: const Column(
+                  children: [
+                    RadioListTile(value: "personal", title: Text("Personal")),
+                    RadioListTile(value: "shared", title: Text("Shared")),
+                  ],
+                ),
               ),
 
               if (savingType == "personal")
@@ -193,17 +191,15 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
                 ),
 
                 _label("Arrange Members"),
-                RadioListTile(
-                  value: "1",
+                RadioGroup<String>(
                   groupValue: arrangeType,
-                  title: const Text("Arrange by Admin"),
                   onChanged: (v) => setState(() => arrangeType = v!),
-                ),
-                RadioListTile(
-                  value: "2",
-                  groupValue: arrangeType,
-                  title: const Text("Arrange by Alphabet"),
-                  onChanged: (v) => setState(() => arrangeType = v!),
+                  child: const Column(
+                    children: [
+                      RadioListTile(value: "1", title: Text("Arrange by Admin")),
+                      RadioListTile(value: "2", title: Text("Arrange by Alphabet")),
+                    ],
+                  ),
                 ),
               ],
 
