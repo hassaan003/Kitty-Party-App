@@ -220,6 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               MaterialPageRoute(
                                 builder: (_) => CreateCommitteeScreen(
                                   userId: userData!["_id"],
+                                  onCreated: fetchProfile,
                                 ),
                               ),
                             );
@@ -350,11 +351,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
 
                                     ElevatedButton(
-                                      onPressed: () {
+                                      onPressed: () async {
+                                        // 1. Add async here
                                         bool isPersonal =
                                             committee["total_cycle"] != null;
 
-                                        Navigator.push(
+                                        
+                                        await Navigator.push(
                                           context,
                                           MaterialPageRoute(
                                             builder: (_) => isPersonal
@@ -365,7 +368,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                                     committee: committee,
                                                   ),
                                           ),
-                                        );
+                                        );                                      
+                                        fetchProfile();
                                       },
                                       child: const Text("Manage"),
                                     ),
@@ -383,7 +387,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                NotificationScreen(userData:  userData!),
+                                NotificationScreen(userData: userData!),
                           ),
                         );
                       },

@@ -3,8 +3,9 @@ import '../services/api_service.dart';
 
 class CreateCommitteeScreen extends StatefulWidget {
   final String userId;
+  final VoidCallback? onCreated;
 
-  const CreateCommitteeScreen({super.key, required this.userId});
+  const CreateCommitteeScreen({super.key, required this.userId, this.onCreated});
 
   @override
   State<CreateCommitteeScreen> createState() => _CreateCommitteeScreenState();
@@ -55,12 +56,10 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
         });
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Committee Created")));
-
+      widget.onCreated?.call();
       Navigator.pop(context);
-      setState(() {}); // refresh home screen
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("Committee Created")));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -70,7 +69,7 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(top: 16, bottom: 6),
+        padding: const EdgeInsets.only(top: 22, bottom: 6),
         child: Align(
           alignment: Alignment.centerLeft,
           child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
@@ -79,7 +78,7 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
 
   Widget boxField(String label, TextEditingController c, {bool numeric = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: TextFormField(
         controller: c,
         keyboardType: numeric ? TextInputType.number : TextInputType.text,
@@ -120,7 +119,7 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Create Committee")),
+      appBar: AppBar(title: const Text("Create Paty")),
       body: Form(
         key: _formKey,
         autovalidateMode: AutovalidateMode.onUserInteraction,
