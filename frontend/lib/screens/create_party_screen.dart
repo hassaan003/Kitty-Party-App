@@ -11,6 +11,7 @@ class CreateCommitteeScreen extends StatefulWidget {
 }
 
 class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
+  final _formKey = GlobalKey<FormState>();
   final name = TextEditingController();
   final amount = TextEditingController();
   final daysGap = TextEditingController();
@@ -24,6 +25,7 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
   DateTime selectedDate = DateTime.now();       
 
   Future createCommittee() async {
+    if (!_formKey.currentState!.validate()) return;
     try {
       if (savingType == "personal") {
         await ApiService().createPersonalCommittee({
@@ -67,15 +69,35 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
     }
   }
 
-  Widget boxField(String hint, TextEditingController c) {
+  Widget _label(String text) => Padding(
+        padding: const EdgeInsets.only(top: 16, bottom: 6),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        ),
+      );
+
+  Widget boxField(String label, TextEditingController c, {bool numeric = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: TextField(
+      child: TextFormField(
         controller: c,
+        keyboardType: numeric ? TextInputType.number : TextInputType.text,
         decoration: InputDecoration(
-          hintText: hint,
-          border: OutlineInputBorder(),
+          labelText: label,
+          hintText: numeric ? 'Enter a number' : 'Enter $label',
+          border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         ),
+        validator: (v) {
+          if (v == null || v.trim().isEmpty) return '$label is required';
+          if (numeric) {
+            final n = int.tryParse(v.trim());
+            if (n == null) return '$label must be a number';
+            if (n <= 0) return '$label must be greater than 0';
+          }
+          return null;
+        },
       ),
     );
   }
@@ -99,132 +121,103 @@ class _CreateCommitteeScreenState extends State<CreateCommitteeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Create Committee")),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(15),
-        child: Column(
-          children: [
-            /// Name
-            boxField("Committee Name", name),
+      body: Form(
+        key: _formKey,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(15),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              boxField("Committee Name", name),
+              boxField("Amount", amount, numeric: true),
 
-            /// Amount
-            boxField("Amount", amount),
-
-            /// Date
-            ElevatedButton(
-              onPressed: pickDate,
-              child: Text(
-                selectedDate.toString().split(" ")[0],
-              ),
-            ),
-
-            boxField("Days Gap", daysGap),
-            boxField("Deadline Day", deadline),
-
-            const SizedBox(height: 10),
-
-            /// Saving Type
-            const Text("Committee Saving Type"),
-
-            RadioListTile(
-              value: "personal",
-              groupValue: savingType,
-              title: const Text("Personal"),
-              onChanged: (v) {
-                setState(() {
-                  savingType = v!;
-                });
-              },
-            ),
-
-            RadioListTile(
-              value: "shared",
-              groupValue: savingType,
-              title: const Text("Shared"),
-              onChanged: (v) {
-                setState(() {
-                  savingType = v!;
-                });
-              },
-            ),
-
-            const SizedBox(height: 10),
-
-            /// PERSONAL
-            if (savingType == "personal") boxField("Total Cycles", totalCycles),
-
-            /// SHARED
-            if (savingType == "shared") ...[
-              const Divider(),
-
-              const Text("Leaving Rule"),
-
-              DropdownButton<String>(
-                value: leavingType,
-                isExpanded: true,
-                items: const [
-                  DropdownMenuItem(
-                    value: "1",
-                    child: Text("1: Keep amount same"),
+              _label("Start Date"),
+              GestureDetector(
+                onTap: pickDate,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    suffixIcon: Icon(Icons.calendar_today, size: 18),
                   ),
-                  DropdownMenuItem(
-                    value: "2",
-                    child: Text("2: Divide leaving amount"),
+                  child: Text(selectedDate.toString().split(" ")[0]),
+                ),
+              ),
+
+              boxField("Days Gap", daysGap, numeric: true),
+              boxField("Deadline Day", deadline, numeric: true),
+
+              _label("Committee Saving Type"),
+              RadioListTile(
+                value: "personal",
+                groupValue: savingType,
+                title: const Text("Personal"),
+                onChanged: (v) => setState(() => savingType = v!),
+              ),
+              RadioListTile(
+                value: "shared",
+                groupValue: savingType,
+                title: const Text("Shared"),
+                onChanged: (v) => setState(() => savingType = v!),
+              ),
+
+              if (savingType == "personal")
+                boxField("Total Cycles", totalCycles, numeric: true),
+
+              if (savingType == "shared") ...[
+                const Divider(height: 24),
+                _label("Leaving Rule"),
+                DropdownButtonFormField<String>(
+                  initialValue: leavingType,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
                   ),
-                ],
-                onChanged: (v) {
-                  setState(() {
-                    leavingType = v!;
-                  });
-                },
+                  items: const [
+                    DropdownMenuItem(value: "1", child: Text("Keep amount same")),
+                    DropdownMenuItem(value: "2", child: Text("Divide leaving amount")),
+                  ],
+                  onChanged: (v) => setState(() => leavingType = v!),
+                ),
+
+                _label("Committee Type"),
+                Row(
+                  children: [
+                    Expanded(child: choiceBtn("Simple", "1")),
+                    const SizedBox(width: 8),
+                    Expanded(child: choiceBtn("Bidding", "2")),
+                    const SizedBox(width: 8),
+                    Expanded(child: choiceBtn("Spin", "3")),
+                  ],
+                ),
+
+                _label("Arrange Members"),
+                RadioListTile(
+                  value: "1",
+                  groupValue: arrangeType,
+                  title: const Text("Arrange by Admin"),
+                  onChanged: (v) => setState(() => arrangeType = v!),
+                ),
+                RadioListTile(
+                  value: "2",
+                  groupValue: arrangeType,
+                  title: const Text("Arrange by Alphabet"),
+                  onChanged: (v) => setState(() => arrangeType = v!),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: createCommittee,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: const Text("Create Committee"),
               ),
-
-              const SizedBox(height: 10),
-
-              const Text("Committee Type"),
-
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  choiceBtn("Simple", "1"),
-                  choiceBtn("Bidding", "2"),
-                  choiceBtn("Spin", "3"),
-                ],
-              ),
-
-              const SizedBox(height: 10),
-
-              const Text("Arrange Members"),
-
-              RadioListTile(
-                value: "1",
-                groupValue: arrangeType,
-                title: const Text("Arrange by Admin"),
-                onChanged: (v) {
-                  setState(() {
-                    arrangeType = v!;
-                  });
-                },
-              ),
-
-              RadioListTile(
-                value: "2",
-                groupValue: arrangeType,
-                title: const Text("Arrange by Alphabet"),
-                onChanged: (v) {
-                  setState(() {
-                    arrangeType = v!;
-                  });
-                },
-              ),
+              const SizedBox(height: 16),
             ],
-
-            const SizedBox(height: 20),
-
-            ElevatedButton(
-              onPressed: createCommittee,
-              child: const Text("Create"),
-            ),
-          ],
+          ),
         ),
       ),
     );
